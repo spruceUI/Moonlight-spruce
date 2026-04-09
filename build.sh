@@ -91,20 +91,26 @@ for patch in /patches/*.patch; do
 done
 
 mkdir -p build && cd build
+
+# Moonlight's cmake/Find*.cmake modules use find_path/find_library directly,
+# so we need to help cmake find arm64 multiarch paths
+SYSROOT=/usr/${CROSS}
 cmake .. \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=${CROSS}-gcc \
     -DCMAKE_CXX_COMPILER=${CROSS}-g++ \
-    -DCMAKE_FIND_ROOT_PATH="/usr/${CROSS};${PREFIX}" \
+    -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${PREFIX};/usr" \
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+    -DCMAKE_LIBRARY_PATH="/usr/lib/${CROSS}" \
+    -DCMAKE_INCLUDE_PATH="/usr/include" \
     -DCMAKE_PREFIX_PATH="$PREFIX" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS="$OPTFLAGS -I${PREFIX}/include" \
-    -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS -L${PREFIX}/lib -Wl,-rpath-link,${PREFIX}/lib" \
-    -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS -L${PREFIX}/lib -Wl,-rpath-link,${PREFIX}/lib" \
+    -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS -L${PREFIX}/lib -L/usr/lib/${CROSS} -Wl,-rpath-link,${PREFIX}/lib -Wl,-rpath-link,/usr/lib/${CROSS}" \
+    -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS -L${PREFIX}/lib -L/usr/lib/${CROSS} -Wl,-rpath-link,${PREFIX}/lib -Wl,-rpath-link,/usr/lib/${CROSS}" \
     -DENABLE_X11=OFF
 make -j$(nproc)
 cd /build
