@@ -8,8 +8,6 @@ OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 CROSS=aarch64-linux-gnu
 SYSROOT=/usr/lib/${CROSS}
 
-export CC=${CROSS}-gcc
-export CXX=${CROSS}-g++
 export AR=${CROSS}-ar
 export STRIP=${CROSS}-strip
 export PKG_CONFIG_PATH=/usr/lib/${CROSS}/pkgconfig
@@ -32,6 +30,7 @@ mkdir -p "$PREFIX"
 
 # ============================================================
 # Build OpenSSL 3.x from source
+# (Don't set CC/CXX — OpenSSL's --cross-compile-prefix handles it)
 # ============================================================
 echo "=== Building OpenSSL ${OPENSSL_VERSION} ==="
 wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
@@ -47,6 +46,10 @@ cd "openssl-${OPENSSL_VERSION}"
 make -j$(nproc)
 make install_sw
 cd /build
+
+# Set CC/CXX for curl and moonlight builds
+export CC=${CROSS}-gcc
+export CXX=${CROSS}-g++
 
 # ============================================================
 # Build curl from source (against our OpenSSL)
