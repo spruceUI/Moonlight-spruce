@@ -125,8 +125,8 @@ mkdir -p "$OUTPUT_DIR/libs"
 cp moonlight/build/moonlight "$OUTPUT_DIR/"
 ${STRIP} -s "$OUTPUT_DIR/moonlight"
 
-# Libraries built by moonlight-embedded
-for lib in moonlight/build/libmoonlight-common.so* moonlight/build/libgamestream.so*; do
+# Libraries built by moonlight-embedded (in libgamestream/ subdir)
+for lib in moonlight/build/libgamestream/libmoonlight-common.so* moonlight/build/libgamestream/libgamestream.so*; do
     [ -f "$lib" ] && cp "$lib" "$OUTPUT_DIR/libs/"
 done
 
