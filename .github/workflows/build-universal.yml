@@ -1,0 +1,78 @@
+name: Build moonlight-embedded (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      moonlight_commit:
+        description: 'Moonlight-embedded commit/tag'
+        default: '274d3db34da764344a7a402ee74e6080350ac0cd'
+      openssl_version:
+        description: 'OpenSSL version'
+        default: '3.3.1'
+      curl_version:
+        description: 'curl version'
+        default: '8.7.1'
+  workflow_call:
+    inputs:
+      moonlight_commit:
+        type: string
+        default: '274d3db34da764344a7a402ee74e6080350ac0cd'
+      openssl_version:
+        type: string
+        default: '3.3.1'
+      curl_version:
+        type: string
+        default: '8.7.1'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure beta release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="beta-${{ github.ref_name }}"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --target "${{ github.ref_name }}" \
+              --title "Beta Build (${{ github.ref_name }})" \
+              --prerelease \
+              --notes "Moonlight-embedded binaries built from ${{ github.ref_name }}" \
+            || true
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ccache-aarch64
+          key: ccache-aarch64-${{ github.sha }}
+          restore-keys: ccache-aarch64-
+
+      - name: Build Docker image
+        run: docker build -t moonlight-builder .
+
+      - name: Build moonlight-embedded
+        run: |
+          mkdir -p output ccache-aarch64
+          docker run --rm \
+            -e MOONLIGHT_COMMIT=${{ inputs.moonlight_commit || '274d3db34da764344a7a402ee74e6080350ac0cd' }} \
+            -e OPENSSL_VERSION=${{ inputs.openssl_version || '3.3.1' }} \
+            -e CURL_VERSION=${{ inputs.curl_version || '8.7.1' }} \
+            -e CCACHE_DIR=/ccache \
+            -v ${{ github.workspace }}/output:/output \
+            -v ${{ github.workspace }}/ccache-aarch64:/ccache \
+            moonlight-builder
+
+      - name: Upload binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd output
+          tar czf ../moonlight-aarch64.tar.gz .
+          cd ..
+          gh release upload "beta-${{ github.ref_name }}" moonlight-aarch64.tar.gz --clobber

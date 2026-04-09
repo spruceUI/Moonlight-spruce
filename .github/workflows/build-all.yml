@@ -1,0 +1,25 @@
+name: Build All
+
+on:
+  workflow_dispatch:
+    inputs:
+      moonlight_commit:
+        description: 'Moonlight-embedded commit/tag'
+        default: '274d3db34da764344a7a402ee74e6080350ac0cd'
+      openssl_version:
+        description: 'OpenSSL version'
+        default: '3.3.1'
+      curl_version:
+        description: 'curl version'
+        default: '8.7.1'
+
+permissions:
+  contents: write
+
+jobs:
+  universal:
+    uses: ./.github/workflows/build-universal.yml
+    with:
+      moonlight_commit: ${{ inputs.moonlight_commit }}
+      openssl_version: ${{ inputs.openssl_version }}
+      curl_version: ${{ inputs.curl_version }}
