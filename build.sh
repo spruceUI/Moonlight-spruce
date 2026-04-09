@@ -135,65 +135,42 @@ cp "$PREFIX"/lib/libssl.so.3 "$OUTPUT_DIR/libs/"
 cp "$PREFIX"/lib/libcrypto.so.3 "$OUTPUT_DIR/libs/"
 cp "$PREFIX"/lib/libcurl.so.4 "$OUTPUT_DIR/libs/"
 
-# System arm64 libs moonlight needs at runtime
+# Recursively collect all shared library dependencies
+# Skip glibc core libs that every device already has
 LIBDIR=/usr/lib/${CROSS}
-collect_lib() {
-    local name="$1"
-    local src
-    # Find the actual .so file (resolve symlinks)
-    src=$(find "$LIBDIR" /lib/${CROSS} -maxdepth 1 -name "${name}" 2>/dev/null | head -1)
-    if [ -n "$src" ]; then
-        cp -L "$src" "$OUTPUT_DIR/libs/"
-        echo "  Collected: $name"
-    else
-        echo "  WARNING: $name not found"
-    fi
+SKIP_LIBS="linux-vdso|ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libgcc_s|libstdc\+\+"
+
+collect_deps() {
+    local binary="$1"
+    ${CROSS}-readelf -d "$binary" 2>/dev/null | grep NEEDED | sed 's/.*\[\(.*\)\]/\1/' | while read -r lib; do
+        # Skip if already collected or in skip list
+        [ -f "$OUTPUT_DIR/libs/$lib" ] && continue
+        echo "$lib" | grep -qE "$SKIP_LIBS" && continue
+
+        # Find in our build prefix, then system arm64 dirs
+        local src
+        src=$(find "$PREFIX/lib" "$LIBDIR" "/lib/${CROSS}" -maxdepth 1 -name "$lib" 2>/dev/null | head -1)
+        if [ -n "$src" ]; then
+            cp -L "$src" "$OUTPUT_DIR/libs/$lib"
+            echo "  Collected: $lib"
+            # Recurse into this lib's own dependencies
+            collect_deps "$OUTPUT_DIR/libs/$lib"
+        else
+            echo "  WARNING: $lib not found"
+        fi
+    done
 }
 
-# FFmpeg / codec
-collect_lib "libavcodec.so.58"
-collect_lib "libavutil.so.56"
-collect_lib "libswresample.so.3"
-
-# Audio
-collect_lib "libopus.so.0"
-collect_lib "libpulse.so.0"
-collect_lib "libpulse-simple.so.0"
-collect_lib "libasound.so.2"
-
-# Input
-collect_lib "libevdev.so.2"
-
-# Network / service discovery
-collect_lib "libavahi-client.so.3"
-collect_lib "libavahi-common.so.3"
-collect_lib "libnghttp2.so.14"
-
-# Transitive dependencies commonly missing on embedded devices
-collect_lib "libexpat.so.1"
-collect_lib "libsndfile.so.1"
-collect_lib "libasyncns.so.0"
-collect_lib "libdbus-1.so.3"
-collect_lib "libsystemd.so.0"
-collect_lib "liblz4.so.1"
-collect_lib "liblzma.so.5"
-collect_lib "libgcrypt.so.20"
-collect_lib "libgpg-error.so.0"
-collect_lib "libbsd.so.0"
-collect_lib "libapparmor.so.1"
-collect_lib "libwrap.so.0"
-collect_lib "libnsl.so.1"
-collect_lib "libtinfo.so.6"
-collect_lib "libFLAC.so.8"
-collect_lib "libvorbis.so.0"
-collect_lib "libvorbisenc.so.2"
-collect_lib "libogg.so.0"
-
-# X11 libs needed by SDL platform backend
-collect_lib "libX11.so.6"
-collect_lib "libxcb.so.1"
-collect_lib "libXau.so.6"
-collect_lib "libXdmcp.so.6"
+echo "Collecting dependencies for moonlight binary..."
+collect_deps "$OUTPUT_DIR/moonlight"
+echo "Collecting dependencies for libgamestream..."
+collect_deps "$OUTPUT_DIR/libs/libgamestream.so.4"
+echo "Collecting dependencies for libmoonlight-common..."
+collect_deps "$OUTPUT_DIR/libs/libmoonlight-common.so.4"
+# Walk all collected libs to catch transitive deps
+for lib in "$OUTPUT_DIR"/libs/*.so*; do
+    collect_deps "$lib"
+done
 
 # Strip all collected libs
 for so in "$OUTPUT_DIR"/libs/*.so*; do

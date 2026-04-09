@@ -30,6 +30,8 @@ RUN dpkg --add-architecture arm64 && \
     uuid-dev:arm64 \
     libavcodec-dev:arm64 \
     libavutil-dev:arm64 \
+    libvpx-dev:arm64 \
+    libx264-dev:arm64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY build.sh /build.sh
