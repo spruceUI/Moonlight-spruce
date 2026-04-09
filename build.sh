@@ -8,7 +8,6 @@ OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 CROSS=aarch64-linux-gnu
 SYSROOT=/usr/lib/${CROSS}
 
-export AR=${CROSS}-ar
 export STRIP=${CROSS}-strip
 export PKG_CONFIG_PATH=/usr/lib/${CROSS}/pkgconfig
 export PKG_CONFIG_LIBDIR=/usr/lib/${CROSS}/pkgconfig
@@ -47,9 +46,10 @@ make -j$(nproc)
 make install_sw
 cd /build
 
-# Set CC/CXX for curl and moonlight builds
+# Set CC/CXX/AR for curl and moonlight builds
 export CC=${CROSS}-gcc
 export CXX=${CROSS}-g++
+export AR=${CROSS}-ar
 
 # ============================================================
 # Build curl from source (against our OpenSSL)
