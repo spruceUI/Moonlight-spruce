@@ -13,6 +13,7 @@ export PKG_CONFIG_PATH=/usr/lib/${CROSS}/pkgconfig
 export PKG_CONFIG_LIBDIR=/usr/lib/${CROSS}/pkgconfig
 
 export OPTFLAGS="-O3 -ffunction-sections -fdata-sections -flto=auto"
+export EXT_CFLAGS="$OPTFLAGS"
 export LDFLAGS="-Wl,--gc-sections -flto=auto"
 
 # ccache setup
@@ -39,9 +40,10 @@ cd "openssl-${OPENSSL_VERSION}"
     --cross-compile-prefix=${CROSS}- \
     --prefix="$PREFIX" \
     --libdir=lib \
-    shared \
+    no-shared \
     no-tests \
-    -O3
+    $OPTFLAGS \
+    $LDFLAGS
 make -j$(nproc)
 make install_sw
 cd /build
@@ -65,8 +67,8 @@ cd "curl-${CURL_VERSION}"
     --without-libpsl \
     --disable-manual \
     --disable-ldap \
-    --enable-shared \
-    --disable-static \
+    --enable-static \
+    --disable-shared \
     CFLAGS="$OPTFLAGS" \
     LDFLAGS="$LDFLAGS -Wl,-rpath-link,$PREFIX/lib"
 make -j$(nproc)
@@ -87,8 +89,8 @@ cd "ffmpeg-${FFMPEG_VERSION}"
     --arch=aarch64 \
     --target-os=linux \
     --enable-cross-compile \
-    --enable-shared \
-    --disable-static \
+    --enable-static \
+    --disable-shared \
     --disable-programs \
     --disable-doc \
     --disable-everything \
@@ -134,6 +136,8 @@ for patch in /patches/*.patch; do
     [ -f "$patch" ] && git apply "$patch" && echo "Applied: $(basename $patch)"
 done
 
+echo 'target_link_libraries(gamestream z)' >> libgamestream/CMakeLists.txt
+
 mkdir -p build && cd build
 
 # Point cmake at our from-source FFmpeg + OpenSSL + curl
@@ -150,9 +154,24 @@ cmake .. \
     -DCMAKE_INCLUDE_PATH="/usr/include;${PREFIX}/include" \
     -DCMAKE_PREFIX_PATH="$PREFIX" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_FIND_LIBRARY_SUFFIXES=".a;.so" \
     -DCMAKE_C_FLAGS="$OPTFLAGS -I${PREFIX}/include" \
-    -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS -L${PREFIX}/lib -L/usr/lib/${CROSS} -Wl,-rpath-link,${PREFIX}/lib -Wl,-rpath-link,/usr/lib/${CROSS}" \
-    -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS -L${PREFIX}/lib -L/usr/lib/${CROSS} -Wl,-rpath-link,${PREFIX}/lib -Wl,-rpath-link,/usr/lib/${CROSS}" \
+    -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS \
+        -L${PREFIX}/lib \
+        -L/usr/lib/${CROSS} \
+        -Wl,-rpath-link,${PREFIX}/lib \
+        -Wl,-rpath-link,/usr/lib/${CROSS} \
+        -Wl,--start-group \
+        -lavcodec -lavutil -lswresample \
+        -lcurl -lssl -lcrypto \
+        -Wl,--end-group \
+        -lpthread -ldl" \
+    -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS \
+        -L${PREFIX}/lib \
+        -L/usr/lib/${CROSS} \
+        -Wl,-rpath-link,${PREFIX}/lib \
+        -Wl,-rpath-link,/usr/lib/${CROSS} \
+        -lz" \
     -DENABLE_X11=OFF
 make -j$(nproc)
 cd /build
@@ -168,17 +187,9 @@ cp moonlight/build/moonlight "$OUTPUT_DIR/"
 ${STRIP} -s "$OUTPUT_DIR/moonlight"
 
 # Libraries built by moonlight-embedded
-for lib in moonlight/build/libgamestream/libmoonlight-common.so* moonlight/build/libgamestream/libgamestream.so*; do
+for lib in moonlight/build/libgamestream/libmoonlight-common.so.4 moonlight/build/libgamestream/libgamestream.so.4; do
     [ -f "$lib" ] && cp "$lib" "$OUTPUT_DIR/libs/"
 done
-
-# Libraries we built from source (OpenSSL, curl, FFmpeg)
-cp "$PREFIX"/lib/libssl.so.3 "$OUTPUT_DIR/libs/"
-cp "$PREFIX"/lib/libcrypto.so.3 "$OUTPUT_DIR/libs/"
-cp "$PREFIX"/lib/libcurl.so.4 "$OUTPUT_DIR/libs/"
-cp "$PREFIX"/lib/libavcodec.so* "$OUTPUT_DIR/libs/"
-cp "$PREFIX"/lib/libavutil.so* "$OUTPUT_DIR/libs/"
-cp "$PREFIX"/lib/libswresample.so* "$OUTPUT_DIR/libs/"
 
 # Recursively collect remaining shared library dependencies
 # Skip libs that devices provide (glibc, SDL2, ALSA, udev, etc.)
