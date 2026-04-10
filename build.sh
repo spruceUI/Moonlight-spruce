@@ -4,9 +4,9 @@ set -e
 MOONLIGHT_COMMIT="${MOONLIGHT_COMMIT:-274d3db34da764344a7a402ee74e6080350ac0cd}"
 OPENSSL_VERSION="${OPENSSL_VERSION:-3.3.1}"
 CURL_VERSION="${CURL_VERSION:-8.7.1}"
+FFMPEG_VERSION="${FFMPEG_VERSION:-4.4.5}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 CROSS=aarch64-linux-gnu
-SYSROOT=/usr/lib/${CROSS}
 
 export STRIP=${CROSS}-strip
 export PKG_CONFIG_PATH=/usr/lib/${CROSS}/pkgconfig
@@ -23,7 +23,7 @@ ln -sf /usr/bin/ccache /usr/local/bin/${CROSS}-g++
 ccache --max-size=500M
 ccache --zero-stats
 
-# Local install prefix for OpenSSL and curl
+# Local install prefix for all from-source builds
 PREFIX=/build/local
 mkdir -p "$PREFIX"
 
@@ -46,7 +46,7 @@ make -j$(nproc)
 make install_sw
 cd /build
 
-# Set CC/CXX/AR for curl and moonlight builds
+# Set CC/CXX/AR for remaining builds
 export CC=${CROSS}-gcc
 export CXX=${CROSS}-g++
 export AR=${CROSS}-ar
@@ -74,6 +74,50 @@ make install
 cd /build
 
 # ============================================================
+# Build minimal FFmpeg from source
+# Only the decoders/demuxers moonlight actually needs
+# ============================================================
+echo "=== Building FFmpeg ${FFMPEG_VERSION} ==="
+wget -q "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz"
+cd "ffmpeg-${FFMPEG_VERSION}"
+./configure \
+    --prefix="$PREFIX" \
+    --cross-prefix=${CROSS}- \
+    --arch=aarch64 \
+    --target-os=linux \
+    --enable-cross-compile \
+    --enable-shared \
+    --disable-static \
+    --disable-programs \
+    --disable-doc \
+    --disable-everything \
+    --enable-decoder=h264 \
+    --enable-decoder=hevc \
+    --enable-decoder=opus \
+    --enable-decoder=aac \
+    --enable-decoder=pcm_s16le \
+    --enable-parser=h264 \
+    --enable-parser=hevc \
+    --enable-parser=opus \
+    --enable-parser=aac \
+    --enable-demuxer=h264 \
+    --enable-demuxer=hevc \
+    --enable-demuxer=rtp \
+    --enable-demuxer=rtsp \
+    --enable-protocol=rtp \
+    --enable-protocol=udp \
+    --enable-protocol=tcp \
+    --enable-swresample \
+    --enable-avcodec \
+    --enable-avutil \
+    --extra-cflags="$OPTFLAGS" \
+    --extra-ldflags="$LDFLAGS"
+make -j$(nproc)
+make install
+cd /build
+
+# ============================================================
 # Build moonlight-embedded
 # ============================================================
 echo "=== Building moonlight-embedded ==="
@@ -92,20 +136,18 @@ done
 
 mkdir -p build && cd build
 
-# Moonlight's cmake/Find*.cmake modules use find_path/find_library directly,
-# so we need to help cmake find arm64 multiarch paths
-SYSROOT=/usr/${CROSS}
+# Point cmake at our from-source FFmpeg + OpenSSL + curl
 cmake .. \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=${CROSS}-gcc \
     -DCMAKE_CXX_COMPILER=${CROSS}-g++ \
-    -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${PREFIX};/usr" \
+    -DCMAKE_FIND_ROOT_PATH="/usr/${CROSS};${PREFIX};/usr" \
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
-    -DCMAKE_LIBRARY_PATH="/usr/lib/${CROSS}" \
-    -DCMAKE_INCLUDE_PATH="/usr/include" \
+    -DCMAKE_LIBRARY_PATH="/usr/lib/${CROSS};${PREFIX}/lib" \
+    -DCMAKE_INCLUDE_PATH="/usr/include;${PREFIX}/include" \
     -DCMAKE_PREFIX_PATH="$PREFIX" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS="$OPTFLAGS -I${PREFIX}/include" \
@@ -125,35 +167,34 @@ mkdir -p "$OUTPUT_DIR/libs"
 cp moonlight/build/moonlight "$OUTPUT_DIR/"
 ${STRIP} -s "$OUTPUT_DIR/moonlight"
 
-# Libraries built by moonlight-embedded (in libgamestream/ subdir)
+# Libraries built by moonlight-embedded
 for lib in moonlight/build/libgamestream/libmoonlight-common.so* moonlight/build/libgamestream/libgamestream.so*; do
     [ -f "$lib" ] && cp "$lib" "$OUTPUT_DIR/libs/"
 done
 
-# OpenSSL and curl libs we built
+# Libraries we built from source (OpenSSL, curl, FFmpeg)
 cp "$PREFIX"/lib/libssl.so.3 "$OUTPUT_DIR/libs/"
 cp "$PREFIX"/lib/libcrypto.so.3 "$OUTPUT_DIR/libs/"
 cp "$PREFIX"/lib/libcurl.so.4 "$OUTPUT_DIR/libs/"
+cp "$PREFIX"/lib/libavcodec.so* "$OUTPUT_DIR/libs/"
+cp "$PREFIX"/lib/libavutil.so* "$OUTPUT_DIR/libs/"
+cp "$PREFIX"/lib/libswresample.so* "$OUTPUT_DIR/libs/"
 
-# Recursively collect all shared library dependencies
-# Skip glibc core libs that every device already has
-LIBDIR=/usr/lib/${CROSS}
-SKIP_LIBS="linux-vdso|ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libgcc_s|libstdc\+\+"
+# Recursively collect remaining shared library dependencies
+# Skip libs that devices provide (glibc, SDL2, ALSA, udev, etc.)
+SKIP_LIBS="linux-vdso|ld-linux|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libgcc_s|libstdc\+\+|libSDL2|libasound|libudev|libdrm|libwayland|libEGL|libGLES|libMali|libz\.so"
 
 collect_deps() {
     local binary="$1"
     ${CROSS}-readelf -d "$binary" 2>/dev/null | grep NEEDED | sed 's/.*\[\(.*\)\]/\1/' | while read -r lib; do
-        # Skip if already collected or in skip list
         [ -f "$OUTPUT_DIR/libs/$lib" ] && continue
         echo "$lib" | grep -qE "$SKIP_LIBS" && continue
 
-        # Find in our build prefix, then system arm64 dirs
         local src
-        src=$(find "$PREFIX/lib" "$LIBDIR" "/lib/${CROSS}" -maxdepth 1 -name "$lib" 2>/dev/null | head -1)
+        src=$(find "$PREFIX/lib" "/usr/lib/${CROSS}" "/lib/${CROSS}" -maxdepth 1 -name "$lib" 2>/dev/null | head -1)
         if [ -n "$src" ]; then
             cp -L "$src" "$OUTPUT_DIR/libs/$lib"
             echo "  Collected: $lib"
-            # Recurse into this lib's own dependencies
             collect_deps "$OUTPUT_DIR/libs/$lib"
         else
             echo "  WARNING: $lib not found"
@@ -161,13 +202,8 @@ collect_deps() {
     done
 }
 
-echo "Collecting dependencies for moonlight binary..."
+echo "Collecting transitive dependencies..."
 collect_deps "$OUTPUT_DIR/moonlight"
-echo "Collecting dependencies for libgamestream..."
-collect_deps "$OUTPUT_DIR/libs/libgamestream.so.4"
-echo "Collecting dependencies for libmoonlight-common..."
-collect_deps "$OUTPUT_DIR/libs/libmoonlight-common.so.4"
-# Walk all collected libs to catch transitive deps
 for lib in "$OUTPUT_DIR"/libs/*.so*; do
     collect_deps "$lib"
 done

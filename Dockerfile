@@ -17,7 +17,9 @@ RUN dpkg --add-architecture arm64 && \
     git \
     ca-certificates \
     wget \
+    nasm \
     ccache \
+    python3 \
     # arm64 cross-compile dependencies
     libsdl2-dev:arm64 \
     libasound2-dev:arm64 \
@@ -28,10 +30,6 @@ RUN dpkg --add-architecture arm64 && \
     libudev-dev:arm64 \
     libexpat1-dev:arm64 \
     uuid-dev:arm64 \
-    libavcodec-dev:arm64 \
-    libavutil-dev:arm64 \
-    libvpx-dev:arm64 \
-    libx264-dev:arm64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY build.sh /build.sh
